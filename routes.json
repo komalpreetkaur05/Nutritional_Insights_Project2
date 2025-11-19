@@ -1,0 +1,8 @@
+{
+  "routes": [
+    {
+      "route": "/api/*",
+      "rewrite": "https://nutritional-insights-backend.azurewebsites.net/api/*"
+    }
+  ]
+}
