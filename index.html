@@ -4,10 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nutritional Insights</title>
+        <!--
+            Nutritional Insights Dashboard (project2ui.html)
+
+            Overview
+            - Single-page, client-only dashboard to explore macronutrient insights by diet type.
+            - Styling via Tailwind CSS (CDN) and charts via Chart.js v3.x (CDN).
+            - Uses static demo data derived from Project1Files/All_Diets.csv for quick iteration.
+
+            Key UI Sections
+            - Header: Page title and branding.
+            - Cards Grid:
+                    • Bar chart: Avg Protein/Carbs/Fat by diet type.
+                    • Scatter plot: Protein vs. Carbs for top protein recipes.
+                    • Heatmap: Static placeholder showing correlation-like values (for demo only).
+                    • Pie chart: Recipe distribution by diet type.
+            - Filters: Text search + diet dropdown; updates charts and table with pagination.
+            - API Buttons: Simulated “Get Nutritional Insights / Recipes / Clusters” responses.
+            - Data Table: Paged table for the currently filtered data set.
+
+            Data Model (demo)
+            - dietTypesData: [{ Diet_type: string, Protein: number, Carbs: number, Fat: number, recipes: number }]
+            - topProteinRecipes: [{ recipe: string, protein: number, carbs: number }]
+            - itemsPerPage (number) controls table pagination size.
+
+            Behavior
+            - Filtering triggers updateCharts(filteredData) and re-renders the table + pagination.
+            - Charts are responsive; bar/pie datasets are recomputed from filteredData.
+            - API functions (getNutritionalInsights / getRecipes / getClusters) currently stub UI
+                feedback only. Replace with real network calls when backend is available.
+
+            Hooking up a real API (example sketch)
+            - Replace getNutritionalInsights() body with:
+                    fetch('/api/nutrition/summary')
+                        .then(r => r.json())
+                        .then(json => {
+                            // Map json to dietTypesData shape, then:
+                            filteredData = mapServerData(json)
+                            currentPage = 1
+                            updateCharts(filteredData)
+                            renderTable()
+                            showMessage('✓ Nutritional Insights Retrieved', json.meta)
+                        })
+                        .catch(err => showError('Failed to retrieve insights', err))
+
+            Dependencies & Versions
+            - Tailwind CSS: 2.0.0 (CDN). If upgrading to v3, utilities and purge/content config may differ.
+            - Chart.js: 3.9.1. If upgrading to v4, note breaking changes to scales/ticks and options.
+
+            Known Limitations / Next Steps
+            - Heatmap is static; consider generating from real correlation matrix and rendering via canvas/SVG.
+            - Demo metrics (e.g., 7,806 records) are placeholders; sync with backend or CSV pipeline.
+            - Consider accessibility improvements (ARIA labels for controls, focus states for buttons).
+            - Consider extracting scripts into separate JS module and adding lightweight tests.
+
+            How to use
+            - Open this HTML file directly in a modern browser.
+            - Search or choose a diet to filter; charts and table will update.
+            - Click API buttons to see simulated responses; wire them to real endpoints later.
+        -->
     <!-- Tailwind CSS CDN -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.0.0/dist/tailwind.min.css" rel="stylesheet">
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        main {
+            flex: 1 0 auto;
+        }
+        footer {
+            flex-shrink: 0;
+        }
+    </style>
 </head>
 <body class="bg-gray-100">
 
@@ -127,37 +200,89 @@
         </section>
     </main>
 
-    <footer class="bg-blue-600 p-4 text-white text-center mt-10">
+    <footer class="bg-blue-600 p-4 text-white text-center">
         <p>&copy; 2025 Nutritional Insights. All Rights Reserved.</p>
         <p class="mt-2 font-semibold">Group 7</p>
         <p class="mt-1">Annie . Komalpreet . Rhailyn Jane</p>
     </footer>
 
     <script>
-        // Data synced from latest CSV analysis (Project1Files/All_Diets.csv)
-        const dietTypesData = [
-            { Diet_type: 'Dash',          Protein: 69.282275,  Carbs: 160.535754, Fat: 101.150562, recipes: 1745 },
-            { Diet_type: 'Keto',          Protein: 101.266508, Carbs: 57.970575,  Fat: 153.116356, recipes: 1512 },
-            { Diet_type: 'Mediterranean', Protein: 101.112316, Carbs: 152.905545, Fat: 101.416138, recipes: 1753 },
-            { Diet_type: 'Paleo',         Protein: 88.674765,  Carbs: 129.552127, Fat: 135.669027, recipes: 1274 },
-            { Diet_type: 'Vegan',         Protein: 56.157030,  Carbs: 254.004192, Fat: 103.299678, recipes: 1522 }
-        ];
+        // API Configuration
+        // Base URL for the Flask backend. If you change the backend host/port,
+        // update this constant. All fetch calls below are composed from this.
+        const API_BASE_URL = 'http://127.0.0.1:5000/api';
 
-        // Top protein-rich recipes from your analysis
-        const topProteinRecipes = [
-            { recipe: 'Grilled Chicken Breast', protein: 52.3, carbs: 12.1 },
-            { recipe: 'Salmon Fillet', protein: 48.7, carbs: 5.2 },
-            { recipe: 'Beef Steak', protein: 46.9, carbs: 8.4 },
-            { recipe: 'Tuna Salad', protein: 44.5, carbs: 15.3 },
-            { recipe: 'Turkey Breast', protein: 42.1, carbs: 10.8 }
-        ];
+        // Data will be loaded from backend
+        // These arrays are populated by loadDataFromBackend() and then
+        // used by charts, filters, and the table renderer.
+        let dietTypesData = [];
+        let topProteinRecipes = [];
 
         // State variables for filtering and pagination
-        let filteredData = [...dietTypesData];
+        let filteredData = [];
         let currentPage = 1;
         const itemsPerPage = 3;
 
+        // Load data from backend on page load
+        // Load initial datasets required by the page:
+        // 1) nutrition summary by diet (bar + pie charts + table)
+        // 2) top-protein recipes (scatter plot)
+        /**
+         * Load initial datasets required by the dashboard and render charts/table.
+         * Fetches nutrition summary and top-protein recipes from the backend API.
+         * @returns {Promise<void>}
+         */
+        async function loadDataFromBackend() {
+            try {
+                // Fetch nutrition summary
+                // Shape (success): { status, total_records, diet_types, data: [...] }
+                const summaryResponse = await fetch(`${API_BASE_URL}/nutrition/summary`);
+                const summaryData = await summaryResponse.json();
+                
+                if (summaryData.status === 'success') {
+                    // Normalize local state and render charts/table
+                    dietTypesData = summaryData.data;
+                    filteredData = [...dietTypesData];
+                    
+                    // Update charts and table
+                    updateCharts(filteredData);
+                    renderTable();
+                }
+
+                // Fetch top protein recipes
+                // Shape (success): { status, count, data: [{recipe, protein, carbs}, ...] }
+                const proteinResponse = await fetch(`${API_BASE_URL}/recipes/top-protein?limit=5`);
+                const proteinData = await proteinResponse.json();
+                
+                if (proteinData.status === 'success') {
+                    topProteinRecipes = proteinData.data;
+                    updateScatterPlot();
+                }
+            } catch (error) {
+                console.error('Error loading data from backend:', error);
+                showError('Failed to connect to backend API. Please ensure the server is running on port 5000.');
+            }
+        }
+
+        // Render a prominent error box in the API response area.
+        /**
+         * Show a prominent error message in the API response panel.
+         * @param {string} message - Human-readable error details to display.
+         */
+        function showError(message) {
+            const response = document.getElementById('apiResponse');
+            response.classList.remove('hidden');
+            response.className = 'mt-4 p-4 bg-red-50 border border-red-200 rounded';
+            response.innerHTML = `
+                <h3 class="font-semibold text-red-800 mb-2">❌ Error</h3>
+                <div class="text-sm text-gray-700">
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+
         // Bar Chart - Average Macronutrients
+        // Initializes an empty chart; datasets are populated via updateCharts().
         const barCtx = document.getElementById('barChart').getContext('2d');
         let barChart = new Chart(barCtx, {
             type: 'bar',
@@ -185,19 +310,20 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    y: { beginAtZero: true }
+                    y: { beginAtZero: true } // keep Y-axis starting at 0 for clarity
                 }
             }
         });
 
         // Scatter Plot - Protein vs Carbs
+        // Filled later by updateScatterPlot() from topProteinRecipes.
         const scatterCtx = document.getElementById('scatterPlot').getContext('2d');
-        new Chart(scatterCtx, {
+        let scatterChart = new Chart(scatterCtx, {
             type: 'scatter',
             data: {
                 datasets: [{
                     label: 'Top Protein Recipes',
-                    data: topProteinRecipes.map(r => ({ x: r.protein, y: r.carbs })),
+                    data: [],
                     backgroundColor: '#8B5CF6'
                 }]
             },
@@ -215,7 +341,18 @@
             }
         });
 
+        // Push points into the scatter dataset and trigger a redraw.
+        /**
+         * Refresh the scatter plot with current `topProteinRecipes` data.
+         * @returns {void}
+         */
+        function updateScatterPlot() {
+            scatterChart.data.datasets[0].data = topProteinRecipes.map(r => ({ x: r.protein, y: r.carbs }));
+            scatterChart.update();
+        }
+
         // Pie Chart - Recipe Distribution
+        // Labels and counts are derived from the current (filtered) diet types.
         const pieCtx = document.getElementById('pieChart').getContext('2d');
         let pieChart = new Chart(pieCtx, {
             type: 'pie',
@@ -233,54 +370,111 @@
         });
 
         // API Interaction Functions
-        function getNutritionalInsights() {
+        // These functions call the backend endpoints on-demand and display
+        // a summary of the result in the green API response panel.
+        /**
+         * Fetch and display the nutrition summary in the API response panel.
+         * Also shows client-side timing for reference.
+         * @returns {Promise<void>}
+         */
+        async function getNutritionalInsights() {
             const response = document.getElementById('apiResponse');
             response.classList.remove('hidden');
-            response.innerHTML = `
-                <h3 class="font-semibold text-green-800 mb-2">✓ Nutritional Insights Retrieved</h3>
-                <div class="text-sm text-gray-700">
-                    <p><strong>Status:</strong> Success</p>
-                    <p><strong>Total Records:</strong> 7,806</p>
-                    <p><strong>Diet Types:</strong> Dash, Keto, Mediterranean, Paleo, Vegan</p>
-                    <p><strong>Source:</strong> nutrition_results.json</p>
-                    <p><strong>Processing Time:</strong> 0.3s</p>
-                </div>
-            `;
+            response.className = 'mt-4 p-4 bg-green-50 border border-green-200 rounded';
+            
+            try {
+                const startTime = performance.now();
+                const res = await fetch(`${API_BASE_URL}/nutrition/summary`);
+                const data = await res.json();
+                const endTime = performance.now();
+                const processingTime = ((endTime - startTime) / 1000).toFixed(2);
+                
+                response.innerHTML = `
+                    <h3 class="font-semibold text-green-800 mb-2">✓ Nutritional Insights Retrieved</h3>
+                    <div class="text-sm text-gray-700">
+                        <p><strong>Status:</strong> ${data.status}</p>
+                        <p><strong>Total Records:</strong> ${data.total_records.toLocaleString()}</p>
+                        <p><strong>Diet Types:</strong> ${data.diet_types}</p>
+                        <p><strong>Source:</strong> All_Diets.csv (via Backend API)</p>
+                        <p><strong>Processing Time:</strong> ${processingTime}s</p>
+                    </div>
+                `;
+            } catch (error) {
+                showError('Failed to retrieve nutritional insights: ' + error.message);
+            }
         }
 
-        function getRecipes() {
+        /**
+         * Fetch and display recipe statistics (optionally filtered by diet type).
+         * @returns {Promise<void>}
+         */
+        async function getRecipes() {
             const response = document.getElementById('apiResponse');
             response.classList.remove('hidden');
-            response.innerHTML = `
-                <h3 class="font-semibold text-green-800 mb-2">✓ Recipes Retrieved</h3>
-                <div class="text-sm text-gray-700">
-                    <p><strong>Status:</strong> Success</p>
-                    <p><strong>Total Recipes:</strong> 7,806</p>
-                    <p><strong>Average Protein:</strong> 83.3g</p>
-                    <p><strong>Average Carbs:</strong> 151.0g</p>
-                    <p><strong>Average Fat:</strong> 118.9g</p>
-                    <p><strong>Processing Time:</strong> 0.4s</p>
-                </div>
-            `;
+            response.className = 'mt-4 p-4 bg-green-50 border border-green-200 rounded';
+            
+            try {
+                const startTime = performance.now();
+                const res = await fetch(`${API_BASE_URL}/recipes`);
+                const data = await res.json();
+                const endTime = performance.now();
+                const processingTime = ((endTime - startTime) / 1000).toFixed(2);
+                
+                response.innerHTML = `
+                    <h3 class="font-semibold text-green-800 mb-2">✓ Recipes Retrieved</h3>
+                    <div class="text-sm text-gray-700">
+                        <p><strong>Status:</strong> ${data.status}</p>
+                        <p><strong>Total Recipes:</strong> ${data.statistics.total_recipes.toLocaleString()}</p>
+                        <p><strong>Average Protein:</strong> ${data.statistics.avg_protein}g</p>
+                        <p><strong>Average Carbs:</strong> ${data.statistics.avg_carbs}g</p>
+                        <p><strong>Average Fat:</strong> ${data.statistics.avg_fat}g</p>
+                        <p><strong>Processing Time:</strong> ${processingTime}s</p>
+                    </div>
+                `;
+            } catch (error) {
+                showError('Failed to retrieve recipes: ' + error.message);
+            }
         }
 
-        function getClusters() {
+        /**
+         * Fetch and display simple macronutrient-based cluster groupings.
+         * @returns {Promise<void>}
+         */
+        async function getClusters() {
             const response = document.getElementById('apiResponse');
             response.classList.remove('hidden');
-            response.innerHTML = `
-                <h3 class="font-semibold text-green-800 mb-2">✓ Cluster Analysis Complete</h3>
-                <div class="text-sm text-gray-700">
-                    <p><strong>Status:</strong> Success</p>
-                    <p><strong>Clusters Identified:</strong> 5</p>
-                    <p><strong>High Protein Cluster:</strong> Keto, Mediterranean</p>
-                    <p><strong>High Carb Cluster:</strong> Vegan</p>
-                    <p><strong>Balanced Cluster:</strong> Dash, Paleo</p>
-                    <p><strong>Processing Time:</strong> 0.5s</p>
-                </div>
-            `;
+            response.className = 'mt-4 p-4 bg-green-50 border border-green-200 rounded';
+            
+            try {
+                const startTime = performance.now();
+                const res = await fetch(`${API_BASE_URL}/clusters`);
+                const data = await res.json();
+                const endTime = performance.now();
+                const processingTime = ((endTime - startTime) / 1000).toFixed(2);
+                
+                response.innerHTML = `
+                    <h3 class="font-semibold text-green-800 mb-2">✓ Cluster Analysis Complete</h3>
+                    <div class="text-sm text-gray-700">
+                        <p><strong>Status:</strong> ${data.status}</p>
+                        <p><strong>Clusters Identified:</strong> ${data.clusters_identified}</p>
+                        <p><strong>High Protein Cluster:</strong> ${data.high_protein_cluster.join(', ')}</p>
+                        <p><strong>High Carb Cluster:</strong> ${data.high_carb_cluster.join(', ')}</p>
+                        <p><strong>Balanced Cluster:</strong> ${data.balanced_cluster.join(', ')}</p>
+                        <p><strong>Processing Time:</strong> ${processingTime}s</p>
+                    </div>
+                `;
+            } catch (error) {
+                showError('Failed to retrieve clusters: ' + error.message);
+            }
         }
 
         // Update charts based on filtered data
+        // This rebinds labels and dataset values for both the bar and pie charts.
+        /**
+         * Update the bar and pie charts with a filtered dataset.
+         * @param {Array<{Diet_type:string,Protein:number,Carbs:number,Fat:number,recipes:number}>} data
+         * @returns {void}
+         */
         function updateCharts(data) {
             // Update bar chart
             barChart.data.labels = data.map(d => d.Diet_type);
@@ -299,6 +493,11 @@
         document.getElementById('searchInput').addEventListener('input', filterData);
         document.getElementById('dietSelect').addEventListener('change', filterData);
 
+        // Filter table + charts whenever search input or diet dropdown changes.
+        /**
+         * Filter `dietTypesData` by search term and selected diet; refresh UI.
+         * @returns {void}
+         */
         function filterData() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
             const selectedDiet = document.getElementById('dietSelect').value;
@@ -319,6 +518,11 @@
         }
 
         // Render table with pagination
+        // Slices the filtered data for the current page and builds table rows.
+        /**
+         * Render the paginated table for the current page of `filteredData`.
+         * @returns {void}
+         */
         function renderTable() {
             const tableBody = document.getElementById('dataTableBody');
             const startIndex = (currentPage - 1) * itemsPerPage;
@@ -345,6 +549,11 @@
         }
 
         // Render pagination controls
+        // Generates Previous / page numbers / Next buttons, wired to update the table.
+        /**
+         * Render pagination controls and wire them to update the current page.
+         * @returns {void}
+         */
         function renderPagination() {
             const paginationControls = document.getElementById('paginationControls');
             const totalPages = Math.ceil(filteredData.length / itemsPerPage);
@@ -390,9 +599,10 @@
             paginationControls.appendChild(nextButton);
         }
 
-        // Initialize table on page load
+        // Initialize data and table on page load
+        // On DOM ready, fetch initial datasets and render.
         document.addEventListener('DOMContentLoaded', () => {
-            renderTable();
+            loadDataFromBackend();
         });
     </script>
 
