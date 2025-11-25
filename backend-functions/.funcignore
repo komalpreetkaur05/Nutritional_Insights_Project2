@@ -1,0 +1,17 @@
+# Create the file
+New-Item -ItemType File -Name ".funcignore"
+
+# Open in Notepad
+notepad .funcignore
+```
+
+**Copy and paste these lines into Notepad:**
+```
+.git*
+.vscode
+__pycache__/
+*.py[cod]
+.env
+local.settings.json
+test/
+.venv/
